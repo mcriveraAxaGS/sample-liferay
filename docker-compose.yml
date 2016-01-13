@@ -1,0 +1,11 @@
+liferay:
+  build: . 
+  ports:
+    - 8080:8080
+  user: "10001"
+  environment:
+    - LIFERAY_DB_TYPE=POSTGRESQL
+    - LIFERAY_DB_HOST=db
+    - LIFERAY_DB_DATABASE=liferay-test
+    - LIFERAY_DB_USER=pguser
+    - LIFERAY_DB_PASSWORD=password

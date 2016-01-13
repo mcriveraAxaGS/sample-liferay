@@ -1,0 +1,199 @@
+# This OpenShift template will build a docker image using the Dockerfile found in the git repository
+# and then deploy it
+# To use it, you need to first create an "sshkeys" secret :
+# $ oc secrets new sshkeys ssh-privatekey=$HOME/.ssh/id_rsa ssh-publickey=$HOME/.ssh/id_rsa.pub
+# and associate it with the builder service account :
+# $ oc secrets add sa/builder secret/sshkeys
+# And then create a "dockercfg" secret :
+# $ oc secrets new dockercfg $HOME/.dockercfg
+# and associate it with the builder service account :
+# $ oc secrets add sa/builder secret/dockercfg
+# Then, upload the template :
+# $ oc create -f from_dockerfile.yml
+# (you can use the scripts/init-project.sh to do it for you)
+# And create your application, either with the web console, or the cli :
+# $ oc new-app --template=from-dockerfile -p APPLICATION_NAME=someapp,GITHUB_REPO=AXA-GROUP-SOLUTIONS/openshift-playground
+
+kind: Template
+apiVersion: v1
+metadata:
+  name: liferay-axa-assistance-app-server-pg-service
+  annotations:
+    description: Build a Docker Image from a Dockerfile, and deploy it.
+    tags: dockerfile
+labels:
+  # list of labels that are applied to every object during the template to config transformation
+  template: liferay-axa-assistance-app-server-pg-service
+
+parameters:
+
+- name: APPLICATION_NAME
+  description: The name of the application
+  value: axa-assistance-mcrivera
+- name: GITHUB_REPO
+  description: The GitHub repository (owner/repo) of the application source code
+  value: mcriveraAxaGS/sample-liferay
+- name: GIT_REF
+  description: The Git Ref (branch)
+  value: master
+- name: GIT_CONTEXT_DIR
+  description: The directory in the source code where the Dockerfile is located
+  value: /
+- name: BASE_IMAGE
+  description: The (optional) registry, name and tag of the docker base image referenced by the Dockerfile
+  value: axags/liferay-openshift
+- name: DOCKER_CFG_SECRET
+  description: The name of the secret that contains the docker credentials
+  value: dockercfg
+- name: SSH_KEYS_SECRET
+  description: The name of the secret that contains the SSH keys
+  value: sshkeys
+- name: GITHUB_TRIGGER_SECRET
+  description: The secret used for the GitHub Trigger
+  generate: expression
+  from: "[a-z0-9]{8}"
+- name: GENERIC_TRIGGER_SECRET
+  description: The secret used for the Generic Trigger
+  generate: expression
+  from: "[a-z0-9]{8}"
+- name: OPENSHIFT_INSTANCE
+  description: The hostname of the openshift instance
+  value: openshift-eu.admin.axaxx.nu
+
+objects:
+
+# defines a wrapper on top of our newly built image
+# (this is used to trigger a deployment if the image changes = has been rebuilt)
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    name: ${APPLICATION_NAME}
+    labels:
+      application: ${APPLICATION_NAME}
+  spec:
+    tags:
+    - name: latest
+      from:
+        kind: DockerImage
+        name: library/${APPLICATION_NAME}:latest
+
+# defines the build configuration
+- kind: BuildConfig
+  apiVersion: v1
+  metadata:
+    name: ${APPLICATION_NAME}
+    labels:
+      application: ${APPLICATION_NAME}
+  spec:
+    strategy:
+      type: Docker
+      dockerStrategy:
+        # the base image referenced by the Dockerfile
+        from:
+          kind: DockerImage
+          name: ${BASE_IMAGE}
+        # if it requires credentials to pull it
+        pullSecret:
+          name: ${DOCKER_CFG_SECRET}
+    source:
+      type: Git
+      git:
+        uri: git@github.com:${GITHUB_REPO}.git
+        ref: ${GIT_REF}
+      contextDir: ${GIT_CONTEXT_DIR}
+      sourceSecret:
+        name: ${SSH_KEYS_SECRET}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${APPLICATION_NAME}:latest
+    triggers:
+    - type: GitHub
+      github:
+        secret: ${GITHUB_TRIGGER_SECRET}
+    - type: Generic
+      generic:
+        secret: ${GENERIC_TRIGGER_SECRET}
+    - type: ImageChange
+
+# defines the deployment configuration
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    name: ${APPLICATION_NAME}
+    labels:
+      application: ${APPLICATION_NAME}
+  spec:
+    replicas: 1
+    selector:
+      deploymentconfig: ${APPLICATION_NAME}
+    strategy:
+      type: Rolling
+      rollingParams:
+        intervalSeconds: 1
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+    template:
+      metadata:
+        name: ${APPLICATION_NAME}
+        labels:
+          deploymentconfig: ${APPLICATION_NAME}
+          application: ${APPLICATION_NAME}
+      spec:
+        containers:
+        - name: ${APPLICATION_NAME}
+          image: library/${APPLICATION_NAME}:latest
+          readinessProbe:
+            httpGet:
+              port: 8080
+              path: /
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+          env:
+           - name: LIFERAY_DB_TYPE
+             value: POSTGRESQL
+           - name: LIFERAY_DB_HOST
+             value: postgresql
+           - name: LIFERAY_DB_DATABASE
+             value: liferay-test
+           - name: LIFERAY_DB_USER
+             value: pguser
+           - name: LIFERAY_DB_PASSWORD
+             value: password
+    triggers:
+    # causes a new deployment to be created any time the replication controller template changes
+    - type: ConfigChange
+    # causes a new deployment to be created each time a new version of the image is available
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        from:
+          kind: ImageStreamTag
+          name: ${APPLICATION_NAME}:latest
+        containerNames:
+        - ${APPLICATION_NAME}
+  status: {}
+
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: ${APPLICATION_NAME}
+    labels:
+      application: ${APPLICATION_NAME}
+  spec:
+    selector:
+      deploymentconfig: ${APPLICATION_NAME}
+    ports:
+    - port: 8080
+
+- kind: Route
+  apiVersion: v1
+  metadata:
+    name: ${APPLICATION_NAME}
+    labels:
+      application: ${APPLICATION_NAME}
+  spec:
+    host:
+    to:
+      kind: Service
+      name: ${APPLICATION_NAME}
