@@ -17,13 +17,13 @@
 kind: Template
 apiVersion: v1
 metadata:
-  name: liferay-axa-assistance-app-server-pg-service
+  name: axa-assistance-mcrivera-app-server-pg-service
   annotations:
     description: Build a Docker Image from a Dockerfile, and deploy it.
     tags: dockerfile
 labels:
   # list of labels that are applied to every object during the template to config transformation
-  template: liferay-axa-assistance-app-server-pg-service
+  template: axa-assistance-mcrivera-app-server-pg-service
 
 parameters:
 
